@@ -14,6 +14,7 @@ import { Badge } from '../components/ui/badge'
 import SubdomainChecker from '../components/SubdomainChecker'
 import { useCompany } from '../contexts/CompanyContext'
 import { useAuth } from '../contexts/AuthContext'
+import { SubdomainService } from '../lib/subdomain'
 
 const createCompanySchema = z.object({
   name: z.string().min(2, 'Company name must be at least 2 characters'),
@@ -83,7 +84,7 @@ const CreateCompany: React.FC = () => {
         setError(result.error)
       } else {
         // Redirect to the company's subdomain login page
-        window.location.href = `${window.location.protocol}//${data.subdomain}.${window.location.host}/login`
+        window.location.href = SubdomainService.getWorkspaceUrl(data.subdomain, '/login')
       }
     } catch (error) {
       console.error('Error creating company:', error)

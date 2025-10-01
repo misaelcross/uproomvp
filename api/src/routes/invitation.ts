@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthenticatedRequest } from '../lib/auth';
+import { authenticateUser } from '../lib/auth';
 
 const createInvitationSchema = z.object({
   email: z.string().email(),
@@ -73,6 +73,7 @@ export async function invitationRoutes(fastify: FastifyInstance) {
           companyId,
           role,
           invitedById: userId,
+          token: crypto.randomUUID(),
         },
       });
 

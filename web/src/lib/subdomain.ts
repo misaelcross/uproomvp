@@ -183,19 +183,23 @@ export class SubdomainService {
   }
 
   /**
+   * Get the base domain for the current environment
+   */
+  static getBaseDomain(): string {
+    if (process.env.NODE_ENV === 'production') {
+      return process.env.VITE_DOMAIN || 'uproom.com'
+    } else {
+      // For development, always use localhost:8080 to avoid port conflicts
+      return 'localhost:8080'
+    }
+  }
+
+  /**
    * Get workspace URL with proper subdomain handling
    */
   static getWorkspaceUrl(subdomain: string, path: string = ''): string {
     const protocol = window.location.protocol
-    const port = window.location.port
-    
-    let domain: string
-    
-    if (process.env.NODE_ENV === 'production') {
-      domain = process.env.VITE_DOMAIN || 'uproom.com'
-    } else {
-      domain = port ? `localhost:${port}` : 'localhost:8080'
-    }
+    const domain = this.getBaseDomain()
     
     const baseUrl = `${protocol}//${subdomain}.${domain}`
     return path ? `${baseUrl}${path.startsWith('/') ? path : '/' + path}` : baseUrl

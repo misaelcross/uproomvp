@@ -46,9 +46,9 @@ const AuthCallback = () => {
             description: 'Your account has been successfully verified.',
           })
           
-          // Redirect to dashboard after a short delay
+          // Redirect to main dashboard to show all workspaces after a short delay
           setTimeout(() => {
-            navigate('/dashboard')
+            navigate('/maindashboard')
           }, 2000)
         } else {
           setError('No session found. Please try logging in again.')

@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { supabase } from './supabase';
 import { prisma } from './prisma';
 
 const authHeaderSchema = z.object({

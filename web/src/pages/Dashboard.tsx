@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Building2, Users, Settings, Plus, LogOut, BarChart3, MessageCircle, Link } from 'lucide-react'
+import { SubdomainService } from '@/lib/subdomain'
 
 const Dashboard = () => {
   const navigate = useNavigate()
@@ -138,7 +139,7 @@ const Dashboard = () => {
                     </div>
                     <Button 
                       onClick={() => {
-                        window.location.href = `${window.location.protocol}//${company.subdomain}.${window.location.host}/login`
+                        window.location.href = SubdomainService.getWorkspaceUrl(company.subdomain, '/login')
                       }}
                       className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
                     >

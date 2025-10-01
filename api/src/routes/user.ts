@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthenticatedRequest } from '../lib/auth';
+import { authenticateUser } from '../lib/auth';
 
 export async function userRoutes(fastify: FastifyInstance) {
   // Obter perfil do usuário

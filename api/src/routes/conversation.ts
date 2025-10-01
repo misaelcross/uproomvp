@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthenticatedRequest } from '../lib/auth';
+import { authenticateUser } from '../lib/auth';
 
 const createConversationSchema = z.object({
   title: z.string().min(1),

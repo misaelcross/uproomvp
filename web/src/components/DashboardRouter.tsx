@@ -7,6 +7,7 @@ import Dashboard from '@/pages/Dashboard'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AlertTriangle, Home } from 'lucide-react'
+import { SubdomainService } from '@/lib/subdomain'
 
 const DashboardRouter: React.FC = () => {
   const { subdomain, company, isLoading, isValidWorkspace } = useSubdomain()
@@ -32,12 +33,8 @@ const DashboardRouter: React.FC = () => {
       return
     }
 
-    // If user has a current company but is on main domain, redirect to their company subdomain login
-    // Only redirect if user is NOT already on a subdomain
-    if (!isLoading && !companyLoading && !subdomain && currentCompany && user) {
-      window.location.href = `${window.location.protocol}//${currentCompany.subdomain}.${window.location.host}/login`
-      return
-    }
+    // Removed automatic redirection to allow users to see their workspaces on main domain
+    // Users can now choose which workspace to access from the main dashboard
   }, [isLoading, companyLoading, subdomain, isValidWorkspace, company, user, userCompanies, currentCompany])
 
   // Show loading while checking subdomain and company status
@@ -73,7 +70,9 @@ const DashboardRouter: React.FC = () => {
             
             <div className="flex flex-col space-y-2">
               <Button 
-                onClick={() => window.location.href = `${window.location.protocol}//${subdomain}.${window.location.host}`}
+                onClick={() => {
+                  window.location.href = SubdomainService.getWorkspaceUrl(subdomain)
+                }}
                 className="w-full"
               >
                 Go to Workspace

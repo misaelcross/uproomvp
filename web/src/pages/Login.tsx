@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
 import { useRateLimit } from '@/hooks/useRateLimit'
 import { useSubdomain } from '@/hooks/useSubdomain'
+import AuthRedirect from '@/components/AuthRedirect'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -95,8 +96,8 @@ const Login = () => {
               window.location.href = `${window.location.protocol}//${window.location.host}/`
             }, 100)
           } else {
-            // On main domain, redirect to dashboard
-            navigate('/dashboard')
+            // On main domain, redirect to main dashboard to show all workspaces
+            navigate('/maindashboard')
           }
         },
         (error) => {
@@ -115,19 +116,20 @@ const Login = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted/20" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]" />
-      
-      {/* Header */}
-      <header className="relative z-10 border-b border-border/40 bg-background/80 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4">
-          <Link to="/" className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
-            <span className="text-xl font-semibold">Uproom</span>
-          </Link>
-        </div>
-      </header>
+    <AuthRedirect>
+      <div className="min-h-screen bg-background relative overflow-hidden">
+        {/* Background Pattern */}
+        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted/20" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]" />
+        
+        {/* Header */}
+        <header className="relative z-10 border-b border-border/40 bg-background/80 backdrop-blur-sm">
+          <div className="container mx-auto px-4 py-4">
+            <Link to="/" className="flex items-center space-x-2 text-foreground hover:text-primary transition-colors">
+              <span className="text-xl font-semibold">Uproom</span>
+            </Link>
+          </div>
+        </header>
 
       {/* Main Content */}
       <div className="relative z-10 flex items-center justify-center min-h-[calc(100vh-80px)] p-4">
@@ -238,6 +240,7 @@ const Login = () => {
         </Card>
       </div>
     </div>
+    </AuthRedirect>
   )
 }
 

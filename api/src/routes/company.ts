@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthenticatedRequest } from '../lib/auth';
+import { authenticateUser } from '../lib/auth';
 
 const createCompanySchema = z.object({
   name: z.string().min(1, 'Company name is required'),
@@ -40,19 +40,16 @@ export async function companyRoutes(fastify: FastifyInstance) {
         properties: {
           name: {
             type: 'string',
-            description: 'Nome da empresa',
-            example: 'Minha Empresa'
+            description: 'Nome da empresa'
           },
           subdomain: {
             type: 'string',
             description: 'Subdomínio único para a empresa',
-            example: 'minha-empresa',
             pattern: '^[a-z0-9-]+$'
           },
           description: {
             type: 'string',
-            description: 'Descrição opcional da empresa',
-            example: 'Uma empresa incrível'
+            description: 'Descrição opcional da empresa'
           }
         }
       },
@@ -311,7 +308,6 @@ export async function companyRoutes(fastify: FastifyInstance) {
           subdomain: {
             type: 'string',
             description: 'Subdomínio a ser verificado',
-            example: 'minha-empresa'
           }
         }
       },
@@ -368,7 +364,6 @@ export async function companyRoutes(fastify: FastifyInstance) {
           subdomain: {
             type: 'string',
             description: 'Subdomínio da empresa',
-            example: 'minha-empresa'
           }
         }
       },

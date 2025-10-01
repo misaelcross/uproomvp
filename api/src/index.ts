@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
@@ -17,12 +16,11 @@ const prisma = new PrismaClient();
 
 const fastify = Fastify({
   logger: {
-    level: process.env.NODE_ENV === 'production' ? 'warn' : 'info',
+    transport: {
+      target: 'pino-pretty',
+    }
   },
 });
-
-// Register plugins
-fastify.register(helmet);
 
 // Swagger configuration
 fastify.register(swagger, {
@@ -146,7 +144,6 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3333');
     await fastify.listen({ port, host: '0.0.0.0' });
-    console.log(`🚀 API rodando na porta ${port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

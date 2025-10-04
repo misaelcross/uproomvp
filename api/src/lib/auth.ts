@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from './prisma';
+import { prisma } from './database';
+import { AuthService } from './auth-service';
 
 const authHeaderSchema = z.object({
   authorization: z.string().regex(/^Bearer .+$/),
@@ -19,49 +20,49 @@ export const authenticateUser = async (
   reply: FastifyReply
 ) => {
   try {
+    console.log('🔍 Auth: Verificando autenticação para:', request.url);
+    console.log('🔍 Auth: Headers:', request.headers.authorization ? 'Authorization presente' : 'Sem Authorization');
+    
     const { authorization } = authHeaderSchema.parse(request.headers);
     const token = authorization.replace('Bearer ', '');
 
-    console.log('Token recebido:', token.substring(0, 20) + '...');
+    console.log('🔍 Auth: Token recebido:', token.substring(0, 20) + '...');
     
-    // Para debug, usar um ID fixo temporário
-    const debugUserId = '379fa24f-559f-4535-9173-7e4a0a043ddb';
-    const debugUserEmail = 'user@example.com';
+    // Verificar token JWT
+    const decoded = AuthService.verifyToken(token);
     
-    // Verificar se o usuário existe no banco local
-    let user = await prisma.user.findUnique({
-      where: { id: debugUserId }
+    if (!decoded) {
+      console.log('Token inválido ou expirado');
+      return reply.status(401).send({ error: 'Token inválido' });
+    }
+
+    // Buscar dados do usuário no banco local
+    const dbUser = await prisma.user.findUnique({
+      where: { id: decoded.userId },
     });
-    
-    // Se não existir, criar o usuário
-    if (!user) {
-      console.log('Usuário não encontrado, criando...');
-      user = await prisma.user.create({
-        data: {
-          id: debugUserId,
-          email: debugUserEmail,
-          name: 'Debug User'
-        }
-      });
-      console.log('Usuário criado:', user);
+
+    if (!dbUser) {
+      console.log('Usuário não encontrado no banco local:', decoded.userId);
+      return reply.status(404).send({ error: 'Usuário não encontrado' });
     }
     
+    console.log('Usuário autenticado:', { id: dbUser.id, email: dbUser.email });
+    
     (request as AuthenticatedRequest).user = {
-      id: user.id,
-      email: user.email,
+      id: dbUser.id,
+      email: dbUser.email,
     };
     
-    // Código original comentado para debug:
-    // const { data: { user }, error } = await supabase.auth.getUser(token);
-    // if (error || !user) {
-    //   return reply.status(401).send({ error: 'Token inválido' });
-    // }
-    // (request as AuthenticatedRequest).user = {
-    //   id: user.id,
-    //   email: user.email || '',
-    // };
   } catch (error) {
-    console.error('Authentication error:', error);
+    console.error('❌ Auth: Erro de autenticação:', error);
+    console.error('❌ Auth: URL:', request.url);
+    console.error('❌ Auth: Headers:', request.headers);
+    
+    if (error instanceof z.ZodError) {
+      console.error('❌ Auth: Erro de validação do header:', error.errors);
+      return reply.status(401).send({ error: 'Header de autorização inválido' });
+    }
+    
     return reply.status(401).send({ error: 'Token de autenticação inválido' });
   }
 };

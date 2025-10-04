@@ -1,52 +1,195 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-
-const createUserSchema = z.object({
-  id: z.string(),
-  email: z.string().email(),
-  name: z.string().optional(),
-});
+import { prisma } from '../lib/database';
+import { AuthService } from '../lib/auth-service';
+import { config } from '../lib/config';
+import { 
+  signInSchema, 
+  signUpSchema, 
+  resetPasswordSchema, 
+  updatePasswordSchema,
+  validateData 
+} from '../lib/validation';
+import { 
+  AuthenticationError, 
+  ValidationError, 
+  withErrorHandling 
+} from '../lib/errors';
 
 export async function authRoutes(fastify: FastifyInstance) {
-  // Criar ou atualizar usuário após login
-  fastify.post('/user', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id, email, name } = createUserSchema.parse(request.body);
+  // Login otimizado
+  fastify.post('/signin', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    const { email, password } = validateData(signInSchema, request.body);
 
-      const user = await prisma.user.upsert({
-        where: { id },
-        update: { email, name },
-        create: { id, email, name },
-      });
+    const result = await AuthService.signIn(email, password);
 
-      return { user };
-    } catch (error) {
-      return reply.status(400).send({ error: 'Dados inválidos' });
+    if (!result.success) {
+      throw new AuthenticationError(result.error || 'Falha na autenticação');
     }
-  });
 
-  // Obter perfil do usuário
-  fastify.get('/profile', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const authHeader = request.headers.authorization;
-      if (!authHeader) {
-        return reply.status(401).send({ error: 'Token não fornecido' });
+    if (!result.user || !result.token) {
+      throw new AuthenticationError('Falha na autenticação');
+    }
+
+    return {
+      user: result.user,
+      session: {
+        access_token: result.token,
+        refresh_token: '', // We'll handle this if needed
+        expires_at: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
+        user: result.user
+      },
+    };
+  }));
+
+  // Registro otimizado
+  fastify.post('/signup', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    console.log('🔍 [SIGNUP] Recebendo requisição de signup:', {
+      headers: request.headers,
+      body: request.body
+    });
+
+    const { email, password, fullName } = validateData(signUpSchema, request.body);
+
+    console.log('🔍 [SIGNUP] Dados validados:', { email, fullName });
+
+    const result = await AuthService.signUp(email, password, fullName);
+
+    console.log('🔍 [SIGNUP] Resultado do AuthService:', result);
+
+    if (!result.success) {
+      console.error('❌ [SIGNUP] Erro no AuthService:', result.error);
+      throw new AuthenticationError(result.error || 'Falha ao criar usuário');
+    }
+
+    if (!result.user || !result.token) {
+      console.error('❌ [SIGNUP] Usuário ou token não encontrado');
+      throw new AuthenticationError('Falha ao criar usuário');
+    }
+
+    console.log('✅ [SIGNUP] Usuário criado com sucesso:', result.user.email);
+
+    return {
+      user: result.user,
+      session: {
+        access_token: result.token,
+        refresh_token: '', // We'll handle this if needed
+        expires_at: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
+        user: result.user
+      },
+      requiresConfirmation: false,
+      message: 'Conta criada com sucesso',
+    };
+  }));
+
+  // Logout otimizado
+  fastify.post('/signout', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    // With JWT, logout is handled on the client side by removing the token
+    // No server-side action needed for stateless JWT
+    return { message: 'Logout realizado com sucesso' };
+  }));
+
+  // Reset de senha otimizado
+  fastify.post('/reset-password', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    const { email } = validateData(resetPasswordSchema, request.body);
+
+    const result = await AuthService.resetPassword(email);
+
+    if (!result.success) {
+      throw new AuthenticationError(result.error || 'Falha ao enviar email de recuperação');
+    }
+
+    return { message: 'Email de recuperação enviado' };
+  }));
+
+  // Atualizar senha otimizado
+  fastify.post('/update-password', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    const { password } = validateData(updatePasswordSchema, request.body);
+    const authHeader = request.headers.authorization;
+    
+    if (!authHeader) {
+      throw new AuthenticationError('Token não fornecido');
+    }
+    
+    const token = authHeader.replace('Bearer ', '');
+    const decoded = AuthService.verifyToken(token);
+    
+    if (!decoded) {
+      throw new AuthenticationError('Token inválido');
+    }
+    
+    const result = await AuthService.updatePassword(decoded.userId, password);
+
+    if (!result.success) {
+      throw new AuthenticationError(result.error || 'Falha ao atualizar senha');
+    }
+
+    return { message: 'Senha atualizada com sucesso' };
+  }));
+
+  // Obter perfil do usuário otimizado
+  fastify.get('/profile', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    const authHeader = request.headers.authorization;
+    if (!authHeader) {
+      throw new AuthenticationError('Token não fornecido');
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    
+    // Verificar token JWT
+    const decoded = AuthService.verifyToken(token);
+    
+    if (!decoded) {
+      throw new AuthenticationError('Token inválido');
+    }
+
+    // Buscar dados do usuário no banco local
+    const dbUser = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+    });
+
+    if (!dbUser) {
+      return reply.status(404).send({ error: 'Usuário não encontrado' });
+    }
+
+    return {
+      user: {
+        id: dbUser.id,
+        email: dbUser.email,
+        fullName: dbUser.fullName,
+        avatar: dbUser.avatar,
+        createdAt: dbUser.createdAt,
+      },
+    };
+  }));
+
+  // Verificar sessão otimizado
+  fastify.get('/session', withErrorHandling(async (request: FastifyRequest, reply: FastifyReply) => {
+    const authHeader = request.headers.authorization;
+    if (!authHeader) {
+      throw new AuthenticationError('Token não fornecido');
+    }
+    
+    const token = authHeader.replace('Bearer ', '');
+    const decoded = AuthService.verifyToken(token);
+    
+    if (!decoded) {
+      throw new AuthenticationError('Token inválido');
+    }
+
+    const user = await AuthService.getUserByToken(token);
+    
+    if (!user) {
+      throw new AuthenticationError('Usuário não encontrado');
+    }
+
+    return { 
+      session: {
+        access_token: token,
+        refresh_token: '',
+        expires_at: Date.now() + (7 * 24 * 60 * 60 * 1000),
+        user: user
       }
+    };
+  }));
 
-      const token = authHeader.replace('Bearer ', '');
-      // Aqui você validaria o token com Supabase
-      // Por enquanto, vamos retornar um usuário mock
-      
-      return {
-        user: {
-          id: 'user-id',
-          email: 'user@example.com',
-          name: 'Usuário Teste',
-        },
-      };
-    } catch (error) {
-      return reply.status(500).send({ error: 'Erro interno' });
-    }
-  });
 }

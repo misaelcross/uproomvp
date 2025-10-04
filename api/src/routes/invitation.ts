@@ -1,12 +1,17 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { authenticateUser } from '../lib/auth';
+import { prisma } from '../lib/database';
+import { requireAuth, AuthenticatedRequest } from '../lib/session-middleware';
+import { config } from '../lib/config';
 
 const createInvitationSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().optional(),
   companyId: z.string(),
-  role: z.enum(['MEMBER', 'ADMIN']).optional().default('MEMBER'),
+  role: z.enum(['MEMBER', 'ADMIN', 'OWNER']).optional().default('MEMBER'),
+  expiresAt: z
+    .union([z.string().datetime().optional(), z.date().optional()])
+    .optional(),
+  maxUses: z.number().int().min(1).optional().default(1),
 });
 
 const acceptInvitationSchema = z.object({
@@ -14,21 +19,23 @@ const acceptInvitationSchema = z.object({
 });
 
 export async function invitationRoutes(fastify: FastifyInstance) {
-  // Criar convite
-  fastify.post('/', {
-    preHandler: authenticateUser,
+  // Enviar convite (gera link único por email/workspace)
+  fastify.post('/send', {
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const { email, companyId, role } = createInvitationSchema.parse(request.body);
-      // @ts-expect-error: 'user' é adicionado pelo middleware authenticateUser
-      const userId = request.user.id;
+      const { email, companyId, role, expiresAt, maxUses } = createInvitationSchema.parse(request.body);
+      const userId = (request as AuthenticatedRequest).user.id;
 
-      // Verificar se o usuário é owner/admin da empresa
+      // Verificar se o usuário é owner/admin da empresa OU possui permissão canInvite
       const membership = await prisma.companyMember.findFirst({
         where: {
           companyId,
           userId,
-          role: { in: ['OWNER', 'ADMIN'] },
+          OR: [
+            { role: { in: ['OWNER', 'ADMIN'] } },
+            { canInvite: true },
+          ],
         },
       });
 
@@ -36,52 +43,98 @@ export async function invitationRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Acesso negado' });
       }
 
-      // Verificar se o usuário já é membro
-      const existingUser = await prisma.user.findUnique({
-        where: { email },
-      });
-
-      if (existingUser) {
-        const existingMembership = await prisma.companyMember.findFirst({
-          where: {
-            companyId,
-            userId: existingUser.id,
-          },
+      // Verificar se o usuário já é membro (apenas se email foi fornecido)
+      if (email) {
+        const existingUser = await prisma.user.findUnique({
+          where: { email },
         });
 
-        if (existingMembership) {
-          return reply.status(400).send({ error: 'Usuário já é membro da empresa' });
+        if (existingUser) {
+          const existingMembership = await prisma.companyMember.findFirst({
+            where: {
+              companyId,
+              userId: existingUser.id,
+            },
+          });
+
+          if (existingMembership) {
+            return reply.status(400).send({ error: 'Usuário já é membro da empresa' });
+          }
         }
       }
 
-      // Verificar se já existe convite pendente
-      const existingInvitation = await prisma.invitation.findFirst({
-        where: {
-          email,
-          companyId,
-          status: 'PENDING',
-        },
-      });
-
-      if (existingInvitation) {
-        return reply.status(400).send({ error: 'Convite já enviado para este email' });
+      // Invalidar convites anteriores pendentes para o mesmo email/company (garante unicidade de uso)
+      if (email) {
+        await prisma.invitation.updateMany({
+          where: { email, companyId, status: 'PENDING' },
+          data: { status: 'CANCELLED' },
+        });
       }
 
+      const token = crypto.randomUUID();
       const invitation = await prisma.invitation.create({
         data: {
-          email,
+          email: email || '',
           companyId,
           role,
           invitedById: userId,
-          token: crypto.randomUUID(),
+          token,
+          expiresAt: expiresAt ? new Date(expiresAt as any) : undefined,
+          maxUses: typeof maxUses === 'number' ? maxUses : 1,
+        },
+        include: { 
+          company: true, 
+          invitedBy: true 
         },
       });
 
-      // Aqui você enviaria o email com o link de convite
-      // const inviteLink = `${process.env.FRONTEND_URL}/accept-invitation?token=${invitation.token}`;
-      // await sendInvitationEmail(email, inviteLink);
+      // Monta URL do convite preferindo subdomínio do workspace
+      // Em dev, FRONTEND_URL pode não suportar subdomínio; nesses casos, use caminho relativo
+      const baseFrontend = config.FRONTEND_URL.replace(/\/$/, '');
+      const subdomain = (invitation as any).company.subdomain;
+      const legacyAcceptPath = `/accept-invitation/${invitation.token}`;
+      const invitePath = `/invite/${invitation.token}`;
+      const invitationUrl = `${baseFrontend}${legacyAcceptPath}`;
 
-      return { invitation };
+      return { success: true, invitation, invitationUrl, invitePath, legacyAcceptPath, subdomain };
+    } catch (error) {
+      return reply.status(400).send({ error: 'Dados inválidos' });
+    }
+  });
+
+  // Validar convite por token (sem autenticação)
+  fastify.get('/validate/:token', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { token } = request.params as { token: string };
+
+      const invitation = await prisma.invitation.findUnique({
+        where: { token },
+        include: { company: true, invitedBy: true },
+      });
+
+      if (!invitation) {
+        return { success: false, message: 'Convite inválido' };
+      }
+
+      if (invitation.status !== 'PENDING') {
+        return { success: false, message: 'Convite já foi processado' };
+      }
+
+      // Verificar expiração
+      const expirationDate = invitation.expiresAt
+        ? new Date(invitation.expiresAt)
+        : (() => { const d = new Date(invitation.createdAt); d.setDate(d.getDate() + 7); return d; })();
+      if (new Date() > expirationDate) {
+        return { success: false, message: 'Convite expirado' };
+      }
+
+      // Validar subdomínio, se fornecido pelo cliente
+      const clientSubdomain = (request.headers['x-workspace-subdomain'] as string | undefined)?.toLowerCase();
+      if (clientSubdomain && clientSubdomain !== invitation.company.subdomain.toLowerCase()) {
+        return { success: false, message: 'Convite não pertence a este workspace' };
+      }
+
+      return { success: true, message: 'Convite válido', invitation };
     } catch (error) {
       return reply.status(400).send({ error: 'Dados inválidos' });
     }
@@ -89,7 +142,7 @@ export async function invitationRoutes(fastify: FastifyInstance) {
 
   // Listar convites da empresa
   fastify.get('/company/:companyId', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { companyId } = request.params as { companyId: string };
@@ -122,16 +175,15 @@ export async function invitationRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Aceitar convite
-  fastify.post('/accept', async (request: FastifyRequest, reply: FastifyReply) => {
+  // Aceitar convite (requer autenticação; usa email do usuário para validar)
+  fastify.post('/accept', { preHandler: requireAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { token } = acceptInvitationSchema.parse(request.body);
+      const authUser = (request as AuthenticatedRequest).user;
 
       const invitation = await prisma.invitation.findUnique({
         where: { token },
-        include: {
-          company: true,
-        },
+        include: { company: true },
       });
 
       if (!invitation) {
@@ -142,32 +194,59 @@ export async function invitationRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: 'Convite já foi processado' });
       }
 
-      // Verificar se o convite não expirou (exemplo: 7 dias)
-      const expirationDate = new Date(invitation.createdAt);
-      expirationDate.setDate(expirationDate.getDate() + 7);
+      // Verificar subdomínio informado pelo cliente
+      const clientSubdomain = (request.headers['x-workspace-subdomain'] as string | undefined)?.toLowerCase();
+      if (!clientSubdomain || clientSubdomain !== invitation.company.subdomain.toLowerCase()) {
+        return reply.status(400).send({ error: 'Convite não pertence a este workspace' });
+      }
+
+      // Verificar expiração (usa expiresAt se existir, senão fallback 7 dias)
+      const expirationDate = invitation.expiresAt
+        ? new Date(invitation.expiresAt)
+        : (() => { const d = new Date(invitation.createdAt); d.setDate(d.getDate() + 7); return d; })();
 
       if (new Date() > expirationDate) {
         return reply.status(400).send({ error: 'Convite expirado' });
       }
 
-      // Aqui você precisaria do ID do usuário que está aceitando o convite
-      // Como estamos usando Supabase Auth, você precisaria validar o token JWT
-      // e extrair o user ID dele
-      const userId = 'user-id-from-jwt-token'; // Substitua pela validação real
+      // Garantir que o email do usuário autenticado corresponde ao email convidado (se email foi especificado)
+      if (invitation.email && invitation.email.length > 0) {
+        if (authUser.email.toLowerCase() !== invitation.email.toLowerCase()) {
+          return reply.status(403).send({ error: 'Este convite não corresponde ao seu email' });
+        }
+      }
+
+      // Verificar limite de uso
+      if (invitation.usedCount >= invitation.maxUses) {
+        return reply.status(400).send({ error: 'Convite já atingiu o limite de uso' });
+      }
 
       // Adicionar usuário à empresa
-      await prisma.companyMember.create({
-        data: {
-          companyId: invitation.companyId,
-          userId,
-          role: invitation.role,
-        },
+      const existingMembership = await prisma.companyMember.findFirst({
+        where: { companyId: invitation.companyId, userId: authUser.id },
       });
 
-      // Marcar convite como aceito
+      if (!existingMembership) {
+        await prisma.companyMember.create({
+          data: {
+            companyId: invitation.companyId,
+            userId: authUser.id,
+            role: invitation.role,
+          },
+        });
+      }
+
+      // Marcar convite como usado/aceito
+      const newUsedCount = invitation.usedCount + 1;
       await prisma.invitation.update({
         where: { id: invitation.id },
-        data: { status: 'ACCEPTED' },
+        data: {
+          usedCount: newUsedCount,
+          status: newUsedCount >= invitation.maxUses ? 'ACCEPTED' : 'PENDING',
+          acceptedAt: new Date(),
+          receiverId: authUser.id,
+          acceptedIp: (request.ip || '').toString(),
+        },
       });
 
       return { success: true, company: invitation.company };
@@ -178,7 +257,7 @@ export async function invitationRoutes(fastify: FastifyInstance) {
 
   // Cancelar convite
   fastify.delete('/:id', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };

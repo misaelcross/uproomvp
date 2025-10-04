@@ -1,7 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { authenticateUser } from '../lib/auth';
+import { prisma } from '../lib/database';
+import { requireAuth } from '../lib/session-middleware';
+import { wsManager } from '../lib/websocket';
 
 const createMessageSchema = z.object({
   content: z.string().min(1),
@@ -16,7 +17,7 @@ const updateMessageSchema = z.object({
 export async function messageRoutes(fastify: FastifyInstance) {
   // Criar mensagem
   fastify.post('/', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { content, conversationId, type } = createMessageSchema.parse(request.body);
@@ -53,6 +54,9 @@ export async function messageRoutes(fastify: FastifyInstance) {
         data: { updatedAt: new Date() },
       });
 
+      // Notificar via WebSocket
+      wsManager.notifyNewMessage(message, conversationId);
+
       return { message };
     } catch (error) {
       return reply.status(400).send({ error: 'Dados inválidos' });
@@ -61,7 +65,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
   // Listar mensagens de uma conversa
   fastify.get('/conversation/:conversationId', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { conversationId } = request.params as { conversationId: string };
@@ -115,7 +119,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
   // Obter mensagem por ID
   fastify.get('/:id', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
@@ -150,7 +154,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
   // Atualizar mensagem
   fastify.put('/:id', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
@@ -185,7 +189,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
   // Deletar mensagem
   fastify.delete('/:id', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
@@ -208,6 +212,108 @@ export async function messageRoutes(fastify: FastifyInstance) {
       });
 
       return { success: true };
+    } catch (error) {
+      return reply.status(500).send({ error: 'Erro interno' });
+    }
+  });
+
+  // Fixar mensagem
+  fastify.post('/:id/pin', {
+    preHandler: requireAuth,
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id } = request.params as { id: string };
+      // @ts-expect-error: 'user' é adicionado pelo middleware authenticateUser
+      const userId = request.user.id;
+
+      // Verificar se a mensagem existe e o usuário tem acesso
+      const message = await prisma.message.findFirst({
+        where: {
+          id,
+          conversation: {
+            participants: {
+              some: {
+                userId,
+              },
+            },
+          },
+        },
+        include: {
+          conversation: true,
+        },
+      });
+
+      if (!message) {
+        return reply.status(404).send({ error: 'Mensagem não encontrada' });
+      }
+
+      // Atualizar mensagem como fixada
+      const updatedMessage = await prisma.message.update({
+        where: { id },
+        data: {
+          isPinned: true,
+          pinnedAt: new Date(),
+          pinnedBy: userId,
+        },
+        include: {
+          user: true,
+        },
+      });
+
+      console.log('📌 Mensagem fixada:', {
+        messageId: id,
+        isPinned: updatedMessage.isPinned,
+        pinnedBy: updatedMessage.pinnedBy,
+        pinnedAt: updatedMessage.pinnedAt
+      });
+
+      return { success: true, message: updatedMessage };
+    } catch (error) {
+      return reply.status(500).send({ error: 'Erro interno' });
+    }
+  });
+
+  // Desfixar mensagem
+  fastify.post('/:id/unpin', {
+    preHandler: requireAuth,
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id } = request.params as { id: string };
+      // @ts-expect-error: 'user' é adicionado pelo middleware authenticateUser
+      const userId = request.user.id;
+
+      // Verificar se a mensagem existe e o usuário tem acesso
+      const message = await prisma.message.findFirst({
+        where: {
+          id,
+          conversation: {
+            participants: {
+              some: {
+                userId,
+              },
+            },
+          },
+        },
+      });
+
+      if (!message) {
+        return reply.status(404).send({ error: 'Mensagem não encontrada' });
+      }
+
+      // Atualizar mensagem como não fixada
+      const updatedMessage = await prisma.message.update({
+        where: { id },
+        data: {
+          isPinned: false,
+          pinnedAt: null,
+          pinnedBy: null,
+        },
+        include: {
+          user: true,
+        },
+      });
+
+      return { success: true, message: updatedMessage };
     } catch (error) {
       return reply.status(500).send({ error: 'Erro interno' });
     }

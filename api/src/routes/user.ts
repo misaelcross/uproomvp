@@ -1,11 +1,11 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { prisma } from '../lib/prisma';
-import { authenticateUser } from '../lib/auth';
+import { prisma } from '../lib/database';
+import { requireAuth } from '../lib/session-middleware';
 
 export async function userRoutes(fastify: FastifyInstance) {
   // Obter perfil do usuário
   fastify.get('/profile', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       // @ts-expect-error: 'user' é adicionado pelo middleware authenticateUser
@@ -34,7 +34,7 @@ export async function userRoutes(fastify: FastifyInstance) {
 
   // Listar usuários de uma empresa
   fastify.get<{ Params: { companyId: string }; Reply: { members: any[] } }>('/company/:companyId', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { companyId } = request.params as { companyId: string };
@@ -69,7 +69,7 @@ export async function userRoutes(fastify: FastifyInstance) {
 
   // Buscar usuários por email
   fastify.get('/search', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { email, companyId } = request.query as { email?: string; companyId?: string };
@@ -108,7 +108,7 @@ export async function userRoutes(fastify: FastifyInstance) {
 
   // Atualizar perfil do usuário
   fastify.put('/profile', {
-    preHandler: authenticateUser,
+    preHandler: requireAuth,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       // @ts-expect-error: 'user' é adicionado pelo middleware authenticateUser

@@ -6,13 +6,15 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
+  fullName  String?
+  avatar    String?
+  password  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -47,6 +49,7 @@ model CompanyMember {
   userId    String
   companyId String
   role      String @default("MEMBER")
+  canInvite Boolean @default(false)
   createdAt DateTime @default(now())
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -65,24 +68,31 @@ model Invitation {
   companyId  String
   invitedById String
   status     String @default("PENDING")
+  expiresAt  DateTime?
+  usedCount  Int      @default(0)
+  maxUses    Int      @default(1)
+  acceptedAt DateTime?
+  receiverId String?
+  acceptedIp String?
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   invitedBy User    @relation("InvitationSender", fields: [invitedById], references: [id])
 
-  @@map("invitations")
+  @@map("invitation")
 }
 
 
 model Conversation {
-  id        String   @id @default(cuid())
-  title     String
-  type      String   @default("DIRECT") // DIRECT or GROUP
-  companyId String
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  type        String   @default("DIRECT") // DIRECT or GROUP
+  companyId   String
   createdById String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   company      Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   participants ConversationParticipant[]
@@ -95,6 +105,7 @@ model ConversationParticipant {
   id             String       @id @default(cuid())
   conversationId String
   userId         String
+  isArchived     Boolean      @default(false)
   createdAt      DateTime     @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -110,6 +121,9 @@ model Message {
   type           String   @default("TEXT") // TEXT, IMAGE, FILE
   conversationId String
   userId         String
+  isPinned       Boolean  @default(false)
+  pinnedAt       DateTime?
+  pinnedBy       String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
